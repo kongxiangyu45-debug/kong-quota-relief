@@ -57,6 +57,12 @@ open "dist/AI Quota Bar.app"
 ./Scripts/package-release.sh 0.1.0
 ```
 
+卸载应用（默认保留本地用量历史）：
+
+```bash
+./Scripts/uninstall.sh
+```
+
 ## 当前限制
 
 - 目前主要针对 Codex Desktop 在 macOS 上产生的本地数据格式。
