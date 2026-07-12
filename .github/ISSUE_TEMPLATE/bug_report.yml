@@ -1,0 +1,33 @@
+name: Bug report
+description: Report incorrect quota, task status, token or progress data
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Do not upload raw ~/.codex logs. Redact task titles and local paths."
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+    validations:
+      required: true
+  - type: input
+    id: codex
+    attributes:
+      label: Codex version
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Redacted screenshot or details
