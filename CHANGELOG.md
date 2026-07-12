@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 - 2026-07-13
+
+- Follow Codex's server-provided quota windows instead of assuming that both five-hour and weekly windows always exist.
+- Show the separate Codex Spark weekly window when available.
+- Show banked full-reset count and the earliest reset-credit expiration.
+- Keep five-hour display compatibility when that window is returned again.
+- Start a v3 task ledger that records the exact quota-window identity, preventing weekly and five-hour percentages from being mixed.
+- Group token-to-percent calibration by both model and quota window.
+- Use the ChatGPT app icon and launch path when the standalone Codex app is absent.
+
 ## 0.1.0 - Unreleased
 
 - Prepare the first public source release.

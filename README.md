@@ -6,7 +6,8 @@
 
 ## 目前能做什么
 
-- 显示 Codex 5 小时、一周额度和重置倒计时。
+- 按 Codex 服务器实际返回的规则，动态显示 5 小时、普通周额度和 Spark 独立周额度。
+- 显示可用的完整重置次数及最早到期日。
 - 读取 Codex 本地任务标题，区分正在运行、刚完成和历史任务。
 - 显示本地日志记录的 Token 处理量。
 - 有任务计划时显示已完成步骤；没有计划时只显示带“约”字的阶段估算。
@@ -17,12 +18,13 @@
 
 AI Quota Bar 有意避免“看起来很准，实际算错任务”：
 
-- **额度百分比**来自 [CodexBar](https://github.com/steipete/CodexBar)。
+- **额度百分比**来自 [CodexBar](https://github.com/steipete/CodexBar)，只显示本次实时返回的窗口，不用旧缓存伪造缺失窗口。
+- **普通 Codex 与 Spark**使用独立额度；Codex、ChatGPT Work 等 Agent 功能可能共享普通用量池，具体以 [OpenAI 官方定价与额度说明](https://developers.openai.com/codex/pricing)为准。
 - **Token**来自本机 `~/.codex` 日志，表示模型处理量，不等于 API 账单金额。
 - **任务额度**只在连续两次额度记录都能确认属于同一个任务时才归因；任务切换、并行运行或长时间缺口会留作“无法归因”，因此可能低估，但不会硬分给某个任务。
 - **进度**只有任务主动维护计划时才是步骤比例；否则必须显示“约”，只代表当前阶段。
 
-从公开版 `0.1.0` 起，可靠归因数据写入新的 `codex-task-usage-v2.json`。旧版账本会留在原处作为备份，但不会混入新报告。
+从 `0.2.0` 起，可靠归因数据写入 `codex-task-usage-v3.json`，同时记录额度窗口身份。旧版账本会留在原处作为备份，但不会把 5 小时和一周百分比混在一起。
 
 ## 隐私
 
@@ -54,7 +56,7 @@ open "dist/AI Quota Bar.app"
 打包 GitHub Release：
 
 ```bash
-./Scripts/package-release.sh 0.1.0
+./Scripts/package-release.sh 0.2.0
 ```
 
 卸载应用（默认保留本地用量历史）：

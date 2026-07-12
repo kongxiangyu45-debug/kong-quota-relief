@@ -13,7 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastGoodAttributedTitle: NSAttributedString?
     private var lastRefreshDate: Date?
     private let claudeIconPath = "/Applications/Claude.app"
-    private let codexIconPath = "/Applications/Codex.app"
+    private var codexIconPath: String {
+        let candidates = ["/Applications/Codex.app", "/Applications/ChatGPT.app"]
+        return candidates.first(where: FileManager.default.fileExists(atPath:)) ?? candidates[0]
+    }
     private let claudeHistoryPath = "\(NSHomeDirectory())/Library/Application Support/com.steipete.codexbar/history/claude.json"
     private let codexHistoryPath = "\(NSHomeDirectory())/Library/Application Support/com.steipete.codexbar/history/codex.json"
     private let codexHomePath = "\(NSHomeDirectory())/.codex"
@@ -80,6 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let timestamp: Date
         let primaryRemaining: Int
         let weeklyRemaining: Int
+        let trackedWindowID: String?
+        let trackedWindowTitle: String?
         let sessionId: String?
         let sessionTitle: String?
         let sessionTotalTokens: Int?
@@ -121,6 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let tokenDelta: Int?
         let tokenTotal: Int?
         let quotaDelta: Double?
+        let quotaWindowID: String?
+        let quotaWindowTitle: String
         let firstSeen: Date
         let lastSeen: Date
         let sessionFile: URL?
@@ -239,9 +246,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         groups: [],
         items: [])
     private let claudeLedgerPath = NSHomeDirectory() + "/Library/Application Support/AI Quota Bar/claude-task-usage.json"
-    // v2 only attributes quota changes when two adjacent observations belong
-    // to the same live task. The legacy ledger is preserved but not mixed in.
-    private let codexLedgerPath = NSHomeDirectory() + "/Library/Application Support/AI Quota Bar/codex-task-usage-v2.json"
+    // v3 records which server-provided window is being tracked. This prevents
+    // five-hour and weekly percentages from being compared after rule changes.
+    private let codexLedgerPath = NSHomeDirectory() + "/Library/Application Support/AI Quota Bar/codex-task-usage-v3.json"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = notification
@@ -271,11 +278,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastOutput = output
                 self.lastRefreshDate = Date()
                 let quotas = self.quotaInfoByProvider(fromJSON: output)
+                let codexUsage = CodexUsageParser.parse(output)
                 if self.showClaudeSection, let claude = quotas["claude"] {
                     self.updateClaudeLedger(claude: claude, activeSession: activeSession)
                 }
-                if let codex = quotas["codex"] {
-                    self.updateCodexLedger(codex: codex, activeSession: activeCodexSession)
+                if let codexUsage {
+                    self.updateCodexLedger(codex: codexUsage, activeSession: activeCodexSession)
                 }
                 self.lastClaudeTasks = self.showClaudeSection ? self.mergeClaudeTaskUsages(sessions: recentSessions) : []
                 self.lastCodexTasks = self.mergeCodexTaskUsages(sessions: recentCodexSessions)
@@ -319,7 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateTitle(from output: String, isManualRefresh: Bool) {
         let jsonQuotas = quotaInfoByProvider(fromJSON: output)
-        let codex = (jsonQuotas["codex"] ?? quotaInfo(for: "Codex", in: output))?.usingResets(from: historyInfo(at: codexHistoryPath))
+        let codex = CodexUsageParser.parse(output)
         let claude = showClaudeSection
             ? (jsonQuotas["claude"] ?? quotaInfo(for: "Claude", in: output))?.usingResets(from: historyInfo(at: claudeHistoryPath))
             : nil
@@ -327,13 +335,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let title: String?
         switch (claude, codex) {
         case let (.some(claude), .some(codex)):
-            title = "Cl \(claude.session)/\(claude.weekly) Cx \(codex.session)/\(codex.weekly)"
+            title = "Cl \(claude.session)/\(claude.weekly) Cx \(codexTitleSummary(codex))"
             setIconTitle(claude: claude, codex: codex)
         case let (.some(claude), .none):
             title = "Cl \(claude.session)/\(claude.weekly)"
             setPlainTitle("Cl \(claude.session)/\(claude.weekly)")
         case let (.none, .some(codex)):
-            title = "Cx \(codex.session)/\(codex.weekly)"
+            title = "Cx \(codexTitleSummary(codex))"
             setCodexIconTitle(codex: codex)
         default:
             title = nil
@@ -361,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.attributedTitle = NSAttributedString(string: title)
     }
 
-    private func setIconTitle(claude: QuotaInfo, codex: QuotaInfo) {
+    private func setIconTitle(claude: QuotaInfo, codex: CodexUsageSnapshot) {
         let result = NSMutableAttributedString()
         appendIcon(from: claudeIconPath, to: result)
         result.append(NSAttributedString(string: " ", attributes: titleAttributes))
@@ -369,16 +377,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         result.append(NSAttributedString(string: "   ", attributes: titleAttributes))
         appendIcon(from: codexIconPath, to: result)
         result.append(NSAttributedString(string: " ", attributes: titleAttributes))
-        appendQuotaBlock(codex, to: result)
+        appendCodexUsageTitle(codex, to: result)
         lastGoodAttributedTitle = result
         statusItem.button?.attributedTitle = result
     }
 
-    private func setCodexIconTitle(codex: QuotaInfo) {
+    private func setCodexIconTitle(codex: CodexUsageSnapshot) {
         let result = NSMutableAttributedString()
         appendIcon(from: codexIconPath, to: result)
         result.append(NSAttributedString(string: " ", attributes: titleAttributes))
-        appendQuotaBlock(codex, to: result)
+        appendCodexUsageTitle(codex, to: result)
         if let suffix = lastTaskRadarSnapshot.titleSuffix {
             result.append(NSAttributedString(string: "  ", attributes: titleAttributes))
             appendRadarTitleSuffix(suffix, to: result)
@@ -413,6 +421,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         text.append(NSAttributedString(
             string: titleWeeklyReset(quota.weeklyReset),
             attributes: footnoteAttributes(position: .superscript)))
+    }
+
+    private func codexTitleWindows(_ usage: CodexUsageSnapshot) -> [CodexUsageWindow] {
+        if usage.primary != nil {
+            return [usage.primary, usage.secondary].compactMap { $0 }
+        }
+        return [usage.secondary, usage.sparkWindow].compactMap { $0 }
+    }
+
+    private func codexTitleSummary(_ usage: CodexUsageSnapshot) -> String {
+        codexTitleWindows(usage).map { window in
+            window.isSpark ? "S\(window.remainingPercent)" : "\(window.remainingPercent)"
+        }.joined(separator: "/")
+    }
+
+    private func appendCodexUsageTitle(_ usage: CodexUsageSnapshot, to text: NSMutableAttributedString) {
+        let windows = codexTitleWindows(usage)
+        for (index, window) in windows.enumerated() {
+            if index > 0 {
+                text.append(NSAttributedString(string: " ", attributes: titleAttributes))
+            }
+            if window.isSpark {
+                text.append(NSAttributedString(string: "S", attributes: titleAttributes))
+            }
+            text.append(NSAttributedString(
+                string: "\(window.remainingPercent)",
+                attributes: quotaAttributes(percent: window.remainingPercent)))
+            let reset = resetString(for: window)
+            let isShortWindow = (window.windowMinutes ?? 0) <= 24 * 60
+            text.append(NSAttributedString(
+                string: isShortWindow ? titleSessionReset(reset) : titleWeeklyReset(reset),
+                attributes: footnoteAttributes(position: isShortWindow ? .lower : .superscript)))
+        }
     }
 
     private var titleAttributes: [NSAttributedString.Key: Any] {
@@ -701,6 +742,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    private func resetString(for window: CodexUsageWindow) -> String? {
+        if let resetsAt = window.resetsAt, resetsAt > Date() {
+            return compactResetDate(resetsAt)
+        }
+
+        if let resetDescription = window.resetDescription {
+            let cleaned = resetDescription
+                .replacingOccurrences(of: "Resets ", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let absolute = compactAbsoluteReset(cleaned) {
+                return absolute
+            }
+            return compactRelativeReset(cleaned)
+        }
+        return nil
+    }
+
     private func historyInfo(at path: String) -> QuotaInfo? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
 
@@ -756,18 +814,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.removeAllItems()
 
         let quotas = quotaInfoByProvider(fromJSON: lastOutput)
-        if !quotas.isEmpty {
+        let codexUsage = CodexUsageParser.parse(lastOutput)
+        if !quotas.isEmpty || codexUsage != nil {
             if showClaudeSection, let claude = quotas["claude"] {
                 addQuotaSectionView(title: "Claude", iconPath: claudeIconPath, quota: claude, tasks: lastClaudeTasks)
             }
-            if let codex = quotas["codex"] {
+            if let codexUsage {
                 if showClaudeSection, quotas["claude"] != nil {
                     menu.addItem(.separator())
                 }
-                addQuotaSectionView(
-                    title: "Codex",
-                    iconPath: codexIconPath,
-                    quota: codex)
+                addCodexUsageSectionView(codexUsage)
                 addTaskRadarSectionView()
             }
             if let lastRefreshDate {
@@ -810,6 +866,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tasks: [CodexTaskUsage] = []) {
         let item = NSMenuItem()
         item.view = quotaSectionView(title: title, iconPath: iconPath, quota: quota, tasks: tasks)
+        item.isEnabled = true
+        menu.addItem(item)
+    }
+
+    private func addCodexUsageSectionView(_ usage: CodexUsageSnapshot) {
+        let item = NSMenuItem()
+        item.view = codexQuotaSectionView(usage: usage)
         item.isEnabled = true
         menu.addItem(item)
     }
@@ -911,13 +974,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.arguments = [cwd]
             NSWorkspace.shared.openApplication(
-                at: URL(fileURLWithPath: "/Applications/Codex.app"),
+                at: URL(fileURLWithPath: codexIconPath),
                 configuration: configuration)
             return
         }
 
         NSWorkspace.shared.openApplication(
-            at: URL(fileURLWithPath: "/Applications/Codex.app"),
+            at: URL(fileURLWithPath: codexIconPath),
             configuration: NSWorkspace.OpenConfiguration())
     }
 
@@ -968,6 +1031,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return view
+    }
+
+    private func codexQuotaSectionView(usage: CodexUsageSnapshot) -> NSView {
+        let windows = usage.allWindows
+        let creditsHeight: CGFloat = usage.availableResetCount > 0 ? 28 : 0
+        let viewHeight = CGFloat(50 + windows.count * 31) + creditsHeight
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: viewHeight))
+
+        let icon = NSImageView(frame: NSRect(x: 18, y: viewHeight - 34, width: 22, height: 22))
+        icon.image = menuIcon(from: codexIconPath, size: 22)
+        view.addSubview(icon)
+
+        let titleLabel = label("Codex", font: .systemFont(ofSize: 16, weight: .semibold), color: .labelColor)
+        titleLabel.frame = NSRect(x: 48, y: viewHeight - 34, width: 230, height: 22)
+        view.addSubview(titleLabel)
+
+        if usage.dataConfidence == "exact" {
+            let confidence = label("实时", font: .systemFont(ofSize: 11), color: .secondaryLabelColor)
+            confidence.alignment = .right
+            confidence.frame = NSRect(x: 300, y: viewHeight - 31, width: 108, height: 16)
+            view.addSubview(confidence)
+        }
+
+        var rowY = viewHeight - 71
+        for window in windows {
+            addCodexProgressRow(
+                to: view,
+                y: rowY,
+                name: window.title,
+                percent: window.remainingPercent,
+                reset: chineseDuration(resetString(for: window)))
+            rowY -= 31
+        }
+
+        if usage.availableResetCount > 0 {
+            let resetTitle = label("完整重置", font: .systemFont(ofSize: 12, weight: .medium), color: .labelColor)
+            resetTitle.frame = NSRect(x: 18, y: 8, width: 72, height: 18)
+            view.addSubview(resetTitle)
+
+            let count = label("\(usage.availableResetCount)次可用", font: .monospacedDigitSystemFont(ofSize: 12, weight: .semibold), color: .systemBlue)
+            count.frame = NSRect(x: 96, y: 8, width: 78, height: 18)
+            view.addSubview(count)
+
+            if let expiry = usage.earliestResetExpiry {
+                let expiryLabel = label("最早\(shortChineseDate(expiry))到期", font: .systemFont(ofSize: 12), color: .secondaryLabelColor)
+                expiryLabel.alignment = .right
+                expiryLabel.frame = NSRect(x: 205, y: 8, width: 203, height: 18)
+                view.addSubview(expiryLabel)
+            }
+        }
+
+        return view
+    }
+
+    private func addCodexProgressRow(
+        to view: NSView,
+        y: CGFloat,
+        name: String,
+        percent: Int,
+        reset: String
+    ) {
+        let nameLabel = label(name, font: .systemFont(ofSize: 12, weight: .medium), color: .labelColor)
+        nameLabel.frame = NSRect(x: 18, y: y + 10, width: 72, height: 18)
+        view.addSubview(nameLabel)
+
+        let percentLabel = label("\(percent)%", font: .monospacedDigitSystemFont(ofSize: 12, weight: .semibold), color: quotaColor(percent: percent))
+        percentLabel.alignment = .right
+        percentLabel.frame = NSRect(x: 90, y: y + 10, width: 42, height: 18)
+        view.addSubview(percentLabel)
+
+        let resetLabel = label(reset, font: .systemFont(ofSize: 12), color: .secondaryLabelColor)
+        resetLabel.alignment = .right
+        resetLabel.frame = NSRect(x: 292, y: y + 10, width: 116, height: 18)
+        view.addSubview(resetLabel)
+
+        view.addSubview(progressBar(percent: percent, frame: NSRect(x: 140, y: y + 16, width: 140, height: 5)))
+    }
+
+    private func shortChineseDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日"
+        return formatter.string(from: date)
     }
 
     private func taskRadarHeaderView(snapshot: TaskRadarSnapshot) -> NSView {
@@ -1465,11 +1611,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? data.write(to: URL(fileURLWithPath: codexLedgerPath))
     }
 
-    private func updateCodexLedger(codex: QuotaInfo, activeSession: CodexSessionInfo?) {
+    private func updateCodexLedger(codex: CodexUsageSnapshot, activeSession: CodexSessionInfo?) {
+        guard let trackedWindow = codex.trackedWindow(for: activeSession?.model) else { return }
         let reading = CodexQuotaReading(
             timestamp: Date(),
-            primaryRemaining: codex.session,
-            weeklyRemaining: codex.weekly,
+            primaryRemaining: trackedWindow.remainingPercent,
+            weeklyRemaining: codex.secondary?.remainingPercent ?? trackedWindow.remainingPercent,
+            trackedWindowID: trackedWindow.id,
+            trackedWindowTitle: trackedWindow.title,
             sessionId: activeSession?.id,
             sessionTitle: activeSession?.title,
             sessionTotalTokens: activeSession?.totalTokens,
@@ -2280,6 +2429,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dateFormatter.dateFormat = "yyyy-MM-dd HH:mm"
         let generatedAt = dateFormatter.string(from: Date())
         let claudeSection = showClaudeSection ? buildClaudeReportSection(dateFormatter: dateFormatter) : ""
+        let codexQuotaSection = CodexUsageParser.parse(lastOutput)
+            .map { buildCurrentCodexUsageReportSection($0) } ?? ""
         let codexSection = buildCodexReportSection(dateFormatter: dateFormatter)
         let radarSection = buildTaskRadarReportSection(dateFormatter: dateFormatter)
 
@@ -2347,12 +2498,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         <body>
         <h1>AI 用量报告</h1>
         <div class="subtitle">生成时间：\(generatedAt)</div>
+        \(codexQuotaSection)
         \(radarSection)
         \(claudeSection)
         \(codexSection)
-        <div class="notice">额度百分比由 CodexBar 获取，Token 处理量来自本地 JSONL。任务额度只统计能够可靠归因的连续记录；任务切换、并行运行和长时间缺口不会硬分给某个任务，因此结果可能偏低。实际套餐和账单请以官方平台为准。</div>
+        <div class="notice">额度窗口以 Codex 当前实际返回为准：缺少的窗口不会用旧缓存补齐。Codex、ChatGPT Work 等 Agent 功能可能共享同一用量池；Spark 使用独立、可能随需求调整的额度。Token 处理量来自本地 JSONL，不等于账单。实际套餐请以 <a href="https://developers.openai.com/codex/pricing">OpenAI 官方页面</a>为准。</div>
         </body>
         </html>
+        """
+    }
+
+    private func buildCurrentCodexUsageReportSection(_ usage: CodexUsageSnapshot) -> String {
+        let rows = usage.allWindows.map { window in
+            let reset = chineseDuration(resetString(for: window))
+            return """
+            <tr>
+                <td style="font-weight:600">\(escapeHTML(window.title))</td>
+                <td style="text-align:right; color:\(window.remainingPercent < 20 ? "#e74c3c" : "#27ae60"); font-weight:700">\(window.remainingPercent)%</td>
+                <td style="text-align:right; color:#666">\(escapeHTML(reset))</td>
+            </tr>
+            """
+        }.joined()
+
+        let resetText: String
+        if usage.availableResetCount > 0 {
+            let expiry = usage.earliestResetExpiry.map { "，最早\(shortChineseDate($0))到期" } ?? ""
+            resetText = "\(usage.availableResetCount) 次可用\(expiry)"
+        } else {
+            resetText = "当前没有可用的完整重置"
+        }
+
+        return """
+        <h2>当前 Codex 额度</h2>
+        <div class="card">
+            <table>
+                <thead><tr><th>额度窗口</th><th style="text-align:right">剩余</th><th style="text-align:right">重置倒计时</th></tr></thead>
+                <tbody>\(rows)</tbody>
+            </table>
+            <p class="note" style="margin-top:16px"><b>完整重置：</b>\(resetText)</p>
+            <p class="note">页面只显示服务器本次实际返回的窗口；普通 Codex 和 Spark 的周额度彼此独立。</p>
+        </div>
         """
     }
 
@@ -2495,37 +2680,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let totalKnownDelta = knownDeltas.reduce(0, +)
 
         var calibrationRows = ""
-        let models = Set(codexLedger.map { $0.sessionModel ?? "未知" })
-        for model in models.sorted() {
-            var ratios: [Double] = []
-            if codexLedger.count > 1 {
-                for i in 1..<codexLedger.count {
-                    let prev = codexLedger[i - 1]
-                    let curr = codexLedger[i]
-                    guard prev.sessionId == curr.sessionId,
-                          (prev.sessionModel ?? "未知") == model,
-                          let prevT = prev.sessionTotalTokens,
-                          let currT = curr.sessionTotalTokens,
-                          currT > prevT
-                    else { continue }
-                    let drop = Double(prev.primaryRemaining - curr.primaryRemaining)
-                    guard drop > 0 else { continue }
-                    ratios.append(Double(currT - prevT) / drop)
-                }
+        var ratiosByGroup: [String: [Double]] = [:]
+        var labelsByGroup: [String: (model: String, window: String)] = [:]
+        if codexLedger.count > 1 {
+            for i in 1..<codexLedger.count {
+                let prev = codexLedger[i - 1]
+                let curr = codexLedger[i]
+                guard prev.sessionId == curr.sessionId,
+                      let windowID = prev.trackedWindowID,
+                      curr.trackedWindowID == windowID,
+                      (prev.sessionModel ?? "未知") == (curr.sessionModel ?? "未知"),
+                      let prevT = prev.sessionTotalTokens,
+                      let currT = curr.sessionTotalTokens,
+                      currT > prevT
+                else { continue }
+                let drop = Double(prev.primaryRemaining - curr.primaryRemaining)
+                guard drop > 0 else { continue }
+                let model = curr.sessionModel ?? "未知"
+                let key = "\(model)\u{0}\(windowID)"
+                ratiosByGroup[key, default: []].append(Double(currT - prevT) / drop)
+                labelsByGroup[key] = (model, curr.trackedWindowTitle ?? "额度窗口")
             }
+        }
+        for key in ratiosByGroup.keys.sorted() {
+            let ratios = ratiosByGroup[key] ?? []
+            let labels = labelsByGroup[key] ?? ("未知", "额度窗口")
             let ratio = ratios.count >= 3 ? ratios.sorted()[ratios.count / 2] : nil
             let ratioStr = ratio.map { String(format: "%.0f tokens/1%%", $0) } ?? "数据不足（需更多配对）"
             let statusColor = ratio != nil ? "#27ae60" : "#e67e22"
             calibrationRows += """
             <tr>
-                <td>\(escapeHTML(model))</td>
+                <td>\(escapeHTML(labels.model))</td>
+                <td>\(escapeHTML(labels.window))</td>
                 <td>\(ratios.count)</td>
                 <td style="color:\(statusColor); font-weight:600">\(ratioStr)</td>
             </tr>
             """
         }
         if calibrationRows.isEmpty {
-            calibrationRows = "<tr><td colspan='3' style='color:#999; text-align:center'>暂无校准数据，继续使用后自动积累</td></tr>"
+            calibrationRows = "<tr><td colspan='4' style='color:#999; text-align:center'>暂无校准数据，继续使用后自动积累</td></tr>"
         }
 
         var rankingRows = ""
@@ -2541,7 +2734,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     <div style="font-weight:600">\(escapeHTML(task.title))</div>
                     <div style="font-size:12px; color:#999">\(dateFormatter.string(from: task.firstSeen)) -> \(dateFormatter.string(from: task.lastSeen))</div>
                 </td>
-                <td style="text-align:right; color:\(usageColor(delta)); font-weight:700">\(deltaText)</td>
+                <td style="text-align:right; color:\(usageColor(delta)); font-weight:700">\(deltaText)<div style="font-size:11px; color:#999; font-weight:400">\(escapeHTML(task.quotaWindowTitle))</div></td>
                 <td style="text-align:right; color:#666">\(tokenText)</td>
                 <td>\(escapeHTML(roughUsageDiagnosis(for: task)))</td>
                 <td>\(escapeHTML(usageAdvice(for: task)))</td>
@@ -2559,7 +2752,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             roughCards += """
             <div class="mini-card">
                 <div class="mini-title">\(escapeHTML(task.title))</div>
-                <div class="mini-meta">额度：\(deltaText) · 新增 Tokens：\(task.tokenDelta.map { compactTokenCount($0) } ?? "-")\(cumulativeTokenText(for: task))</div>
+                <div class="mini-meta">\(escapeHTML(task.quotaWindowTitle))：\(deltaText) · 新增 Tokens：\(task.tokenDelta.map { compactTokenCount($0) } ?? "-")\(cumulativeTokenText(for: task))</div>
                 <div class="mini-body">\(escapeHTML(roughUsageDiagnosis(for: task)))</div>
                 <div class="mini-body"><b>下次省法：</b>\(escapeHTML(usageAdvice(for: task)))</div>
             </div>
@@ -2588,7 +2781,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         <div class="card">
             <h3>额度消耗排行榜（由高到低）</h3>
-            <p class="note">这里按能够可靠归因的 5 小时额度下降排序。新增 TOKENS 是本工具从第一次记录到最后一次记录之间的模型处理量增量；它不等于 API 账单。如果同一个会话以前已经聊了很多，下面会用小字标出“会话累计”。按钮只会复制提示词，不会自动调用 Codex。</p>
+            <p class="note">每条任务会注明归属的额度窗口。不同窗口彼此独立，百分比不能直接换算成相同 Token 数。新增 TOKENS 是模型处理量增量，不等于 API 账单。按钮只会复制提示词，不会自动调用 Codex。</p>
             <table>
                 <thead><tr><th>#</th><th>任务</th><th style="text-align:right">额度</th><th style="text-align:right">新增 TOKENS</th><th>粗判断</th><th>省法</th><th style="text-align:right">细分析</th></tr></thead>
                 <tbody>\(rankingRows)</tbody>
@@ -2596,10 +2789,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         </div>
 
         <div class="card">
-            <h3>校准状态（按 Model 分组）</h3>
-            <p class="note">这块是在估算“多少 token 大约等于 1% 额度”。数据点越多，判断越稳。</p>
+            <h3>校准状态（按 Model 和额度窗口分组）</h3>
+            <p class="note">5 小时、普通周额度和 Spark 周额度分别校准，避免把不同规则混成一个换算比例。</p>
             <table>
-                <thead><tr><th>Model</th><th>数据点</th><th>换算比率</th></tr></thead>
+                <thead><tr><th>Model</th><th>额度窗口</th><th>数据点</th><th>换算比率</th></tr></thead>
                 <tbody>\(calibrationRows)</tbody>
             </table>
         </div>
@@ -2615,7 +2808,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let tasks = grouped.compactMap { sid, readings -> CodexReportTask? in
             let sorted = readings.sorted { $0.timestamp < $1.timestamp }
-            guard let first = sorted.first, let last = sorted.last else { return nil }
+            guard let last = sorted.last,
+                  let windowID = sorted.reversed().compactMap(\.trackedWindowID).first
+            else { return nil }
+            let windowReadings = sorted.filter { $0.trackedWindowID == windowID }
+            guard let firstWindowReading = windowReadings.first,
+                  let lastWindowReading = windowReadings.last
+            else { return nil }
             let latestWithTitle = sorted.reversed().first { ($0.sessionTitle ?? "").isEmpty == false }
             let tokenValues = sorted.compactMap(\.sessionTotalTokens)
             let tokenTotal = tokenValues.last
@@ -2631,9 +2830,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model: last.sessionModel ?? "未知",
                 tokenDelta: tokenDelta,
                 tokenTotal: tokenTotal,
-                quotaDelta: deltaForCodexSession(sid),
-                firstSeen: first.timestamp,
-                lastSeen: last.timestamp,
+                quotaDelta: deltaForCodexSession(sid, windowID: windowID),
+                quotaWindowID: windowID,
+                quotaWindowTitle: lastWindowReading.trackedWindowTitle ?? "额度窗口",
+                firstSeen: firstWindowReading.timestamp,
+                lastSeen: lastWindowReading.timestamp,
                 sessionFile: codexSessionFile(id: sid))
         }
 
@@ -2653,9 +2854,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let minutes = max(1, Int(task.lastSeen.timeIntervalSince(task.firstSeen) / 60))
         var reasons: [String] = []
 
-        if delta >= 15 {
+        let isWeekly = task.quotaWindowTitle.contains("一周")
+        let highThreshold = isWeekly ? 3.0 : 15.0
+        let mediumThreshold = isWeekly ? 1.0 : 5.0
+
+        if delta >= highThreshold {
             reasons.append("额度掉得很明显，通常是大任务、反复验证、或者一次性看了很多材料。")
-        } else if delta >= 5 {
+        } else if delta >= mediumThreshold {
             reasons.append("这是中高消耗任务，值得复盘一下中间有没有来回试错。")
         } else if delta > 0 {
             reasons.append("额度有消耗，但还不算离谱。")
@@ -2683,7 +2888,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func usageAdvice(for task: CodexReportTask) -> String {
         let delta = task.quotaDelta ?? 0
         let tokens = task.tokenDelta ?? 0
-        if delta >= 10 {
+        let highThreshold = task.quotaWindowTitle.contains("一周") ? 2.0 : 10.0
+        if delta >= highThreshold {
             return "下次先让它只列方案和相关文件，确认后再动手；大任务拆成两三个小任务。"
         }
         if tokens >= 3_000_000 {
@@ -2719,6 +2925,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         任务标题：\(task.title)
         模型：\(task.model)
+        额度窗口：\(task.quotaWindowTitle)
         估算额度消耗：\(deltaText)
         本次新增 token 估算：\(tokenText)
         会话累计 token：\(task.tokenTotal.map { compactTokenCount($0) } ?? "累计token未知")
@@ -2765,13 +2972,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return found ? total : nil
     }
 
-    private func deltaForCodexSession(_ sessionId: String) -> Double? {
+    private func deltaForCodexSession(_ sessionId: String, windowID: String? = nil) -> Double? {
         var total = 0.0
         var found = false
         guard codexLedger.count > 1 else { return nil }
+        let targetWindowID = windowID ?? codexLedger.reversed().first {
+            $0.sessionId == sessionId && $0.trackedWindowID != nil
+        }?.trackedWindowID
+        guard let targetWindowID else { return nil }
         for i in 1..<codexLedger.count {
             let prev = codexLedger[i - 1]
             let curr = codexLedger[i]
+            guard prev.trackedWindowID == targetWindowID,
+                  curr.trackedWindowID == targetWindowID
+            else { continue }
             let previous = QuotaReading(
                 timestamp: prev.timestamp,
                 remainingPercent: prev.primaryRemaining,
