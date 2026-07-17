@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 - 2026-07-17
+
+- Automatically hide Codex when the computer only has WorkBuddy data.
+- Automatically hide WorkBuddy when the computer only has Codex data.
+- Apply the same provider detection to tray commands and generated HTML reports.
+- Keep both setup hints visible when neither platform has been configured yet.
+
 ## 0.3.0 - 2026-07-17
 
 - Rename the public app to “kong 的额度焦虑缓解器”.

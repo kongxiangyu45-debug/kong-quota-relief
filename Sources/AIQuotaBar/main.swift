@@ -881,6 +881,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let quotas = quotaInfoByProvider(fromJSON: lastOutput)
         let codexUsage = CodexUsageParser.parse(lastOutput)
+        let hasCodex = codexUsage != nil || !lastCodexTasks.isEmpty || !lastTaskRadarSnapshot.items.isEmpty
+        let hasWorkBuddy = lastWorkBuddyUsage != nil
         if !quotas.isEmpty || codexUsage != nil || lastWorkBuddyUsage != nil {
             var hasSection = false
             if showClaudeSection, let claude = quotas["claude"] {
@@ -926,13 +928,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reportItem.target = self
         menu.addItem(reportItem)
 
-        let openCodexBar = NSMenuItem(title: "打开 CodexBar", action: #selector(openCodexBarApp), keyEquivalent: "")
-        openCodexBar.target = self
-        menu.addItem(openCodexBar)
+        if hasCodex || !hasWorkBuddy {
+            let openCodexBar = NSMenuItem(title: "打开 CodexBar", action: #selector(openCodexBarApp), keyEquivalent: "")
+            openCodexBar.target = self
+            menu.addItem(openCodexBar)
+        }
 
-        let openWorkBuddy = NSMenuItem(title: "打开 WorkBuddy", action: #selector(openWorkBuddyApp), keyEquivalent: "")
-        openWorkBuddy.target = self
-        menu.addItem(openWorkBuddy)
+        if hasWorkBuddy || !hasCodex {
+            let openWorkBuddy = NSMenuItem(title: "打开 WorkBuddy", action: #selector(openWorkBuddyApp), keyEquivalent: "")
+            openWorkBuddy.target = self
+            menu.addItem(openWorkBuddy)
+        }
 
         let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "")
         quitItem.target = self
@@ -2845,12 +2851,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dateFormatter.dateFormat = "yyyy-MM-dd HH:mm"
         let generatedAt = dateFormatter.string(from: Date())
         let claudeSection = showClaudeSection ? buildClaudeReportSection(dateFormatter: dateFormatter) : ""
-        let codexQuotaSection = CodexUsageParser.parse(lastOutput)
+        let codexUsage = CodexUsageParser.parse(lastOutput)
+        let hasCodex = codexUsage != nil || !lastCodexTasks.isEmpty || !lastTaskRadarSnapshot.items.isEmpty
+        let codexQuotaSection = codexUsage
             .map { buildCurrentCodexUsageReportSection($0) } ?? ""
         let workBuddySection = lastWorkBuddyUsage
             .map { buildWorkBuddyReportSection($0, dateFormatter: dateFormatter) } ?? ""
-        let codexSection = buildCodexReportSection(dateFormatter: dateFormatter)
-        let radarSection = buildTaskRadarReportSection(dateFormatter: dateFormatter)
+        let codexSection = hasCodex ? buildCodexReportSection(dateFormatter: dateFormatter) : ""
+        let radarSection = hasCodex ? buildTaskRadarReportSection(dateFormatter: dateFormatter) : ""
+        let platformNotice = hasCodex
+            ? "额度窗口以 Codex 当前实际返回为准：缺少的窗口不会用旧缓存补齐。Codex、ChatGPT Work 等 Agent 功能可能共享同一用量池；Spark 使用独立、可能随需求调整的额度。Token 处理量来自本地 JSONL，不等于账单。实际套餐请以 <a href=\"https://developers.openai.com/codex/pricing\">OpenAI 官方页面</a>为准。"
+            : "当前只检测到 WorkBuddy，因此报告隐藏了 Codex 区块。以后安装并登录 Codex 后，它会自动出现，不需要修改设置。"
 
         return """
         <!DOCTYPE html>
@@ -2921,7 +2932,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         \(claudeSection)
         \(codexSection)
         \(workBuddySection)
-        <div class="notice">额度窗口以 Codex 当前实际返回为准：缺少的窗口不会用旧缓存补齐。Codex、ChatGPT Work 等 Agent 功能可能共享同一用量池；Spark 使用独立、可能随需求调整的额度。Token 处理量来自本地 JSONL，不等于账单。实际套餐请以 <a href="https://developers.openai.com/codex/pricing">OpenAI 官方页面</a>为准。</div>
+        <div class="notice">\(platformNotice)</div>
         </body>
         </html>
         """

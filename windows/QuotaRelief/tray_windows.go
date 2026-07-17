@@ -321,39 +321,49 @@ func (a *trayApplication) showMenu() {
 	addDisabledMenu(menu, "kong的额度焦虑缓解器")
 	addSeparator(menu)
 
-	plan := stringsOr(snapshot.Codex.Plan, "当前账号")
-	addDisabledMenu(menu, "Codex · "+plan)
-	for _, window := range snapshot.Codex.Windows {
-		addDisabledMenu(menu, fmt.Sprintf("  %s  %d%% · %s", window.Name, window.Remaining, resetText(window.ResetAt)))
-	}
-	if len(snapshot.Codex.Windows) == 0 {
-		addDisabledMenu(menu, "  "+stringsOr(snapshot.Codex.Error, "暂时没有额度数据"))
-	}
-	for index, task := range snapshot.Codex.Tasks {
-		command := uint32(1000 + index)
-		status := "近"
-		if task.Running {
-			status = "跑"
+	showCodex := snapshot.showCodex()
+	showWorkBuddy := snapshot.showWorkBuddy()
+	providerAdded := false
+	if showCodex {
+		plan := stringsOr(snapshot.Codex.Plan, "当前账号")
+		addDisabledMenu(menu, "Codex · "+plan)
+		for _, window := range snapshot.Codex.Windows {
+			addDisabledMenu(menu, fmt.Sprintf("  %s  %d%% · %s", window.Name, window.Remaining, resetText(window.ResetAt)))
 		}
-		addMenu(menu, command, fmt.Sprintf("%s  %s · %s · %s", status, task.Title, tokenText(task.Tokens), ageText(task.UpdatedAt)), true)
-		actions[command] = menuAction{URL: "codex://threads/" + task.ID}
+		if len(snapshot.Codex.Windows) == 0 {
+			addDisabledMenu(menu, "  "+stringsOr(snapshot.Codex.Error, "暂时没有额度数据"))
+		}
+		for index, task := range snapshot.Codex.Tasks {
+			command := uint32(1000 + index)
+			status := "近"
+			if task.Running {
+				status = "跑"
+			}
+			addMenu(menu, command, fmt.Sprintf("%s  %s · %s · %s", status, task.Title, tokenText(task.Tokens), ageText(task.UpdatedAt)), true)
+			actions[command] = menuAction{URL: "codex://threads/" + task.ID}
+		}
+		providerAdded = true
 	}
 
-	addSeparator(menu)
-	addDisabledMenu(menu, "WorkBuddy")
-	if snapshot.WorkBuddy.Remaining != nil {
-		balance := "  剩余 " + creditText(*snapshot.WorkBuddy.Remaining) + " 积分"
-		if snapshot.WorkBuddy.Total != nil {
-			balance += " / 总额度 " + creditText(*snapshot.WorkBuddy.Total)
+	if showWorkBuddy {
+		if providerAdded {
+			addSeparator(menu)
 		}
-		addDisabledMenu(menu, balance)
-	} else {
-		addDisabledMenu(menu, "  "+stringsOr(snapshot.WorkBuddy.Error, "暂时没有余额数据"))
-	}
-	for index, task := range snapshot.WorkBuddy.Tasks {
-		command := uint32(2000 + index)
-		addMenu(menu, command, fmt.Sprintf("%s · 最近 %s · 累计 %s", task.Title, creditText(task.LastCredits), creditText(task.AllCredits)), true)
-		actions[command] = menuAction{URL: "workbuddy://chat/" + task.ID}
+		addDisabledMenu(menu, "WorkBuddy")
+		if snapshot.WorkBuddy.Remaining != nil {
+			balance := "  剩余 " + creditText(*snapshot.WorkBuddy.Remaining) + " 积分"
+			if snapshot.WorkBuddy.Total != nil {
+				balance += " / 总额度 " + creditText(*snapshot.WorkBuddy.Total)
+			}
+			addDisabledMenu(menu, balance)
+		} else {
+			addDisabledMenu(menu, "  "+stringsOr(snapshot.WorkBuddy.Error, "暂时没有余额数据"))
+		}
+		for index, task := range snapshot.WorkBuddy.Tasks {
+			command := uint32(2000 + index)
+			addMenu(menu, command, fmt.Sprintf("%s · 最近 %s · 累计 %s", task.Title, creditText(task.LastCredits), creditText(task.AllCredits)), true)
+			actions[command] = menuAction{URL: "workbuddy://chat/" + task.ID}
+		}
 	}
 
 	addSeparator(menu)
@@ -363,8 +373,12 @@ func (a *trayApplication) showMenu() {
 	}
 	addMenu(menu, commandRefresh, refreshTitle, !refreshing)
 	addMenu(menu, commandReport, "生成用量报告", true)
-	addMenu(menu, commandCodex, "打开 Codex", true)
-	addMenu(menu, commandWB, "打开 WorkBuddy", true)
+	if showCodex {
+		addMenu(menu, commandCodex, "打开 Codex", true)
+	}
+	if showWorkBuddy {
+		addMenu(menu, commandWB, "打开 WorkBuddy", true)
+	}
 	addSeparator(menu)
 	addMenu(menu, commandExit, "退出", true)
 

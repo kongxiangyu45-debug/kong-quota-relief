@@ -78,7 +78,7 @@ func loadSnapshot(ctx context.Context) Snapshot {
 }
 
 func loadCodexState(ctx context.Context) CodexState {
-	state := CodexState{}
+	state := CodexState{Detected: codexDetected()}
 	windows, plan, err := fetchCodexWindows(ctx)
 	if err != nil {
 		state.Error = err.Error()
@@ -283,7 +283,7 @@ func rawInt(value json.RawMessage) int {
 }
 
 func loadWorkBuddyState(ctx context.Context) WorkBuddyState {
-	state := WorkBuddyState{}
+	state := WorkBuddyState{Detected: workBuddyDetected()}
 	remaining, total, err := fetchWorkBuddyBalance(ctx)
 	if err != nil {
 		state.Error = err.Error()
@@ -298,6 +298,30 @@ func loadWorkBuddyState(ctx context.Context) WorkBuddyState {
 		state.Error = taskErr.Error()
 	}
 	return state
+}
+
+func codexDetected() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "auth.json")); err == nil {
+		return true
+	}
+	paths, _ := filepath.Glob(filepath.Join(home, ".codex", "state_*.sqlite"))
+	return len(paths) > 0
+}
+
+func workBuddyDetected() bool {
+	if findWorkBuddyAuthPath() != "" {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, ".workbuddy", "workbuddy.db"))
+	return err == nil
 }
 
 func fetchWorkBuddyBalance(ctx context.Context) (float64, float64, error) {

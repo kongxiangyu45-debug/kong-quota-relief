@@ -37,7 +37,10 @@ $report = New-Object System.Collections.Generic.List[string]
 $script:accessToken = ""
 $script:accountID = ""
 $script:fixedVersionFound = $false
-$expectedFixedHash = "59c5d04579b5e5bbe0e54e97b1d90975c1db1d4358863aafae8ba12b69ecea6e"
+$supportedHashes = @(
+    "59c5d04579b5e5bbe0e54e97b1d90975c1db1d4358863aafae8ba12b69ecea6e",
+    "252ba1f608539a3796d92b3ed82b582f156197364af5c0309d219fb1aa96eccc"
+)
 
 function Add-Line {
     param([string]$Text = "")
@@ -112,14 +115,14 @@ function Add-AppCandidate {
     try {
         $file = Get-Item -LiteralPath $Path -ErrorAction Stop
         $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
-        $matches = $hash -eq $expectedFixedHash
+        $matches = $supportedHashes -contains $hash
         if ($matches) { $script:fixedVersionFound = $true }
         Add-Line "- 来源：$Source"
         Add-Line "  - 文件名：$($file.Name)"
         Add-Line "  - 大小：$($file.Length) 字节"
         Add-Line "  - 修改时间：$($file.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))"
         Add-Line "  - SHA256：$hash"
-        Add-Line "  - 是否为 07-15 网络修复版：$(Yes-No $matches)"
+        Add-Line "  - 是否为受支持的公开版：$(Yes-No $matches)"
     } catch {
         Add-Line "- $Source：读取失败，$(Exception-Text $_.Exception)"
     }
@@ -251,7 +254,7 @@ foreach ($root in @([Environment]::GetFolderPath("Desktop"), (Join-Path $env:USE
 if ($script:seenApps.Count -eq 0) {
     Add-Line "- 没有找到正在运行或位于桌面/下载目录的插件 EXE。"
 }
-Add-Line "- 是否找到 07-15 网络修复版：$(Yes-No $script:fixedVersionFound)"
+Add-Line "- 是否找到受支持的公开版：$(Yes-No $script:fixedVersionFound)"
 
 Add-Section "3. Codex 本地登录和数据库"
 $codexHome = Join-Path $env:USERPROFILE ".codex"
@@ -369,7 +372,7 @@ Add-Section "7. 自动初判"
 if (-not $script:accessToken) {
     Add-Line "- 结论：没有读到 Codex Access Token。优先检查 Codex 是否登录，或 Windows 版登录信息是否换了存储位置。"
 } elseif (-not $script:fixedVersionFound) {
-    Add-Line "- 结论：没有找到 07-15 网络修复版。很可能仍在运行旧 EXE，或解压后点错了文件。"
+    Add-Line "- 结论：没有找到受支持的公开版。很可能仍在运行旧 EXE，或解压后点错了文件。"
 } elseif ($systemProbe.Status -eq 200) {
     Add-Line "- 结论：登录和系统代理都能成功访问额度接口。若插件仍不显示，重点检查旧进程是否没有退出，或接口返回格式与插件解析规则不一致。"
 } elseif ($directProbe.Status -eq 200 -and $systemProbe.Status -ne 200) {

@@ -30,13 +30,15 @@ type WorkBuddyTask struct {
 }
 
 type CodexState struct {
-	Plan    string
-	Windows []QuotaWindow
-	Tasks   []CodexTask
-	Error   string
+	Detected bool
+	Plan     string
+	Windows  []QuotaWindow
+	Tasks    []CodexTask
+	Error    string
 }
 
 type WorkBuddyState struct {
+	Detected  bool
 	Remaining *float64
 	Total     *float64
 	Tasks     []WorkBuddyTask
@@ -47,6 +49,22 @@ type Snapshot struct {
 	Codex     CodexState
 	WorkBuddy WorkBuddyState
 	UpdatedAt time.Time
+}
+
+func (state CodexState) available() bool {
+	return state.Detected || len(state.Windows) > 0 || len(state.Tasks) > 0
+}
+
+func (state WorkBuddyState) available() bool {
+	return state.Detected || state.Remaining != nil || state.Total != nil || len(state.Tasks) > 0
+}
+
+func (s Snapshot) showCodex() bool {
+	return s.Codex.available() || !s.WorkBuddy.available()
+}
+
+func (s Snapshot) showWorkBuddy() bool {
+	return s.WorkBuddy.available() || !s.Codex.available()
 }
 
 func (s Snapshot) TrayText() string {
@@ -78,6 +96,8 @@ func (s Snapshot) TrayText() string {
 }
 
 func mergeSnapshot(previous, next Snapshot) Snapshot {
+	next.Codex.Detected = next.Codex.Detected || previous.Codex.Detected
+	next.WorkBuddy.Detected = next.WorkBuddy.Detected || previous.WorkBuddy.Detected
 	if len(next.Codex.Windows) == 0 && len(previous.Codex.Windows) > 0 {
 		next.Codex.Windows = previous.Codex.Windows
 	}

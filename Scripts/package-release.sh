@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-VERSION="${1:-0.3.0}"
+VERSION="${1:-0.3.1}"
 APP_NAME="AI Quota Bar"
 
 "$ROOT/Scripts/build-app.sh" >/dev/null

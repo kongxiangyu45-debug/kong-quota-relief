@@ -27,6 +27,8 @@
 | 生成本地 HTML 用量报告 | 支持 | 支持 |
 | 深度复盘高消耗任务 | 支持 | 暂不支持 |
 
+只安装 WorkBuddy 时，界面会自动隐藏 Codex；只安装 Codex 时，也会自动隐藏 WorkBuddy。以后安装另一个平台，对应区块会自动出现，不需要修改设置。
+
 ## Mac 怎么用
 
 1. 先安装并登录 Codex。
@@ -86,7 +88,7 @@ Mac 版需要 Swift 6：
 Windows 版需要 Go 1.22 或更高版本：
 
 ```bash
-./Scripts/package-windows.sh 0.3.0
+./Scripts/package-windows.sh 0.3.1
 ```
 
 ## 反馈问题

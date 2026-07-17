@@ -65,6 +65,20 @@ func buildReportHTML(snapshot Snapshot) string {
 	if updated.IsZero() {
 		updated = time.Now()
 	}
+	codexSection := ""
+	if snapshot.showCodex() {
+		codexSection = fmt.Sprintf(`
+<h2>Codex 额度</h2><div class="card"><table><thead><tr><th>窗口</th><th>剩余</th><th>重置倒计时</th></tr></thead><tbody>%s</tbody></table>%s</div>
+<h2>Codex 近期任务</h2><div class="card"><table><thead><tr><th>状态</th><th>任务</th><th>Token</th><th>时间</th></tr></thead><tbody>%s</tbody></table></div>`,
+			codexWindows.String(), reportError(snapshot.Codex.Error), codexTasks.String())
+	}
+	workBuddySection := ""
+	if snapshot.showWorkBuddy() {
+		workBuddySection = fmt.Sprintf(`
+<h2>WorkBuddy</h2><div class="card"><div class="stats"><div class="stat"><b>%s</b><span>剩余总积分</span></div><div class="stat"><b>%s</b><span>当前总额度</span></div></div></div>
+<div class="card"><table><thead><tr><th>近期任务</th><th>最近一次</th><th>任务累计</th><th>时间</th></tr></thead><tbody>%s</tbody></table></div>`,
+			remaining, total, workBuddyTasks.String())
+	}
 
 	return fmt.Sprintf(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -77,19 +91,13 @@ table{width:100%%;border-collapse:collapse}th,td{text-align:left;padding:10px;bo
 @media(max-width:640px){main{padding:24px 14px}table{font-size:14px;display:block;overflow-x:auto}.card{padding:14px}}
 </style></head><body><main>
 <h1>kong的额度焦虑缓解器</h1><p class="sub">Windows 本机用量报告 · %s</p>
-<h2>Codex 额度</h2><div class="card"><table><thead><tr><th>窗口</th><th>剩余</th><th>重置倒计时</th></tr></thead><tbody>%s</tbody></table>%s</div>
-<h2>Codex 近期任务</h2><div class="card"><table><thead><tr><th>状态</th><th>任务</th><th>Token</th><th>时间</th></tr></thead><tbody>%s</tbody></table></div>
-<h2>WorkBuddy</h2><div class="card"><div class="stats"><div class="stat"><b>%s</b><span>剩余总积分</span></div><div class="stat"><b>%s</b><span>当前总额度</span></div></div></div>
-<div class="card"><table><thead><tr><th>近期任务</th><th>最近一次</th><th>任务累计</th><th>时间</th></tr></thead><tbody>%s</tbody></table></div>
+%s
+%s
 <p class="note">额度与余额来自对应平台的官方接口；任务标题、Token 和积分明细来自本机记录。Token 处理量不等于账单金额。</p>
 </main></body></html>`,
 		updated.Format("2006-01-02 15:04"),
-		codexWindows.String(),
-		reportError(snapshot.Codex.Error),
-		codexTasks.String(),
-		remaining,
-		total,
-		workBuddyTasks.String())
+		codexSection,
+		workBuddySection)
 }
 
 func reportError(message string) string {

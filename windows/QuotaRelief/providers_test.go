@@ -80,6 +80,57 @@ func TestFormattingAndReport(t *testing.T) {
 	}
 }
 
+func TestWorkBuddyOnlyHidesCodex(t *testing.T) {
+	remaining := 1839.89
+	snapshot := Snapshot{
+		Codex: CodexState{Error: "请先登录 Codex"},
+		WorkBuddy: WorkBuddyState{
+			Detected:  true,
+			Remaining: &remaining,
+			Tasks:     []WorkBuddyTask{{Title: "测试任务", LastCredits: 8.06, AllCredits: 146.79}},
+		},
+	}
+	if snapshot.showCodex() {
+		t.Fatal("WorkBuddy-only mode should hide Codex")
+	}
+	if !snapshot.showWorkBuddy() {
+		t.Fatal("WorkBuddy-only mode should show WorkBuddy")
+	}
+	report := buildReportHTML(snapshot)
+	if strings.Contains(report, "<h2>Codex") {
+		t.Fatal("WorkBuddy-only report should not contain a Codex section")
+	}
+	for _, expected := range []string{"<h2>WorkBuddy", "1839.89", "测试任务"} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("WorkBuddy-only report missing %q", expected)
+		}
+	}
+}
+
+func TestCodexOnlyHidesWorkBuddy(t *testing.T) {
+	snapshot := Snapshot{
+		Codex:     CodexState{Detected: true, Windows: []QuotaWindow{{Name: "Codex 一周", Remaining: 80}}},
+		WorkBuddy: WorkBuddyState{Error: "WorkBuddy 未安装或未登录"},
+	}
+	if !snapshot.showCodex() {
+		t.Fatal("Codex-only mode should show Codex")
+	}
+	if snapshot.showWorkBuddy() {
+		t.Fatal("Codex-only mode should hide WorkBuddy")
+	}
+	report := buildReportHTML(snapshot)
+	if strings.Contains(report, "<h2>WorkBuddy") {
+		t.Fatal("Codex-only report should not contain a WorkBuddy section")
+	}
+}
+
+func TestNoProvidersShowsBothSetupHints(t *testing.T) {
+	snapshot := Snapshot{}
+	if !snapshot.showCodex() || !snapshot.showWorkBuddy() {
+		t.Fatal("empty setup should keep both provider hints visible")
+	}
+}
+
 func TestParseCreditJSONPreservesLastTurn(t *testing.T) {
 	last, total := parseCreditJSON(`{"first":61.54,"second":"86.40"}`)
 	if last != 86.40 {

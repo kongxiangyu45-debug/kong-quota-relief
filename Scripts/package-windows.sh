@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="${0:A:h:h}"
-VERSION="${1:-0.3.0}"
+VERSION="${1:-0.3.1}"
 GO_BIN="${GO_BIN:-$(command -v go || true)}"
 
 if [[ "${SKIP_BUILD:-0}" != "1" ]]; then
