@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let candidates = ["/Applications/Codex.app", "/Applications/ChatGPT.app"]
         return candidates.first(where: FileManager.default.fileExists(atPath:)) ?? candidates[0]
     }
+    private let workBuddyIconPath = "/Applications/WorkBuddy.app"
+    private let workBuddyDatabasePath = "\(NSHomeDirectory())/.workbuddy/workbuddy.db"
+    private let workBuddyAuthPath = "\(NSHomeDirectory())/Library/Application Support/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info"
     private let claudeHistoryPath = "\(NSHomeDirectory())/Library/Application Support/com.steipete.codexbar/history/claude.json"
     private let codexHistoryPath = "\(NSHomeDirectory())/Library/Application Support/com.steipete.codexbar/history/codex.json"
     private let codexHomePath = "\(NSHomeDirectory())/.codex"
@@ -228,10 +231,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hasThinking: Bool
     }
 
+    private struct WorkBuddyTaskUsage {
+        let id: String
+        let title: String
+        let status: String
+        let model: String
+        let lastTurnCredits: Double
+        let totalCredits: Double
+        let contextUsed: Int
+        let contextSize: Int
+        let updatedAt: Date
+
+        var contextPercent: Int? {
+            guard contextSize > 0 else { return nil }
+            return max(0, min(100, Int((Double(contextUsed) / Double(contextSize) * 100).rounded())))
+        }
+    }
+
+    private struct WorkBuddyUsageSnapshot {
+        let remainingCredits: Double?
+        let availableCreditsTotal: Double?
+        let tasks: [WorkBuddyTaskUsage]
+
+        func preservingBalance(from previous: WorkBuddyUsageSnapshot?) -> WorkBuddyUsageSnapshot {
+            WorkBuddyUsageSnapshot(
+                remainingCredits: remainingCredits ?? previous?.remainingCredits,
+                availableCreditsTotal: availableCreditsTotal ?? previous?.availableCreditsTotal,
+                tasks: tasks)
+        }
+    }
+
     private var claudeLedger: [ClaudeQuotaReading] = []
     private var codexLedger: [CodexQuotaReading] = []
     private var lastClaudeTasks: [CodexTaskUsage] = []
     private var lastCodexTasks: [CodexTaskUsage] = []
+    private var lastWorkBuddyUsage: WorkBuddyUsageSnapshot?
     private var lastTaskRadarSnapshot = TaskRadarSnapshot(
         runningCount: 0,
         doneCount: 0,
@@ -254,7 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = notification
         if let button = statusItem.button {
             button.title = "AI ..."
-            button.toolTip = showClaudeSection ? "Claude / Codex quota" : "Codex quota"
+            button.toolTip = showClaudeSection ? "Claude / Codex quota" : "Codex 额度 / WorkBuddy 积分"
         }
         menu.autoenablesItems = false
         statusItem.menu = menu
@@ -274,9 +308,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let recentSessions = self.showClaudeSection ? self.fetchRecentClaudeSessions(limit: 5) : []
             let activeCodexSession = self.activeCodexSession()
             let recentCodexSessions = self.fetchRecentCodexSessions(limit: 5)
+            let workBuddyUsage = self.fetchWorkBuddyUsage(limit: 5)
             DispatchQueue.main.async {
                 self.lastOutput = output
                 self.lastRefreshDate = Date()
+                if let workBuddyUsage {
+                    self.lastWorkBuddyUsage = workBuddyUsage.preservingBalance(from: self.lastWorkBuddyUsage)
+                }
                 let quotas = self.quotaInfoByProvider(fromJSON: output)
                 let codexUsage = CodexUsageParser.parse(output)
                 if self.showClaudeSection, let claude = quotas["claude"] {
@@ -341,15 +379,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title = "Cl \(claude.session)/\(claude.weekly)"
             setPlainTitle("Cl \(claude.session)/\(claude.weekly)")
         case let (.none, .some(codex)):
-            title = "Cx \(codexTitleSummary(codex))"
+            let workBuddy = lastWorkBuddyUsage.map { "WB余\(creditBalanceText($0.remainingCredits)) " } ?? ""
+            title = "\(workBuddy)Cx \(codexTitleSummary(codex))"
             setCodexIconTitle(codex: codex)
         default:
-            title = nil
+            if let workBuddy = lastWorkBuddyUsage {
+                title = "WB余\(creditBalanceText(workBuddy.remainingCredits))"
+                setWorkBuddyIconTitle(workBuddy)
+            } else {
+                title = nil
+            }
         }
 
         if let title {
             lastGoodTitle = title
-            statusItem.button?.toolTip = showClaudeSection ? "Click for Claude / Codex quota details" : "Click for Codex quota details"
+            statusItem.button?.toolTip = showClaudeSection
+                ? "Click for Claude / Codex quota details"
+                : "点击查看 Codex 额度和 WorkBuddy 积分用量"
         } else if let lastGoodAttributedTitle {
             statusItem.button?.attributedTitle = lastGoodAttributedTitle
             statusItem.button?.toolTip = "Last refresh failed. Click for details."
@@ -358,10 +404,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.toolTip = "Last refresh failed. Click for details."
         } else if isManualRefresh {
             setPlainTitle("AI ...")
-            statusItem.button?.toolTip = showClaudeSection ? "Refreshing Claude / Codex quota..." : "Refreshing Codex quota..."
+            statusItem.button?.toolTip = showClaudeSection ? "Refreshing Claude / Codex quota..." : "正在刷新 Codex / WorkBuddy 用量..."
         } else {
             setPlainTitle("AI ...")
-            statusItem.button?.toolTip = showClaudeSection ? "Waiting for Claude / Codex quota data..." : "Waiting for Codex quota data..."
+            statusItem.button?.toolTip = showClaudeSection ? "Waiting for Claude / Codex quota data..." : "等待 Codex / WorkBuddy 用量数据..."
         }
     }
 
@@ -384,6 +430,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setCodexIconTitle(codex: CodexUsageSnapshot) {
         let result = NSMutableAttributedString()
+        if let workBuddy = lastWorkBuddyUsage {
+            appendWorkBuddyTitle(workBuddy, to: result)
+            result.append(NSAttributedString(string: "   ", attributes: titleAttributes))
+        }
         appendIcon(from: codexIconPath, to: result)
         result.append(NSAttributedString(string: " ", attributes: titleAttributes))
         appendCodexUsageTitle(codex, to: result)
@@ -393,6 +443,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         lastGoodAttributedTitle = result
         statusItem.button?.attributedTitle = result
+    }
+
+    private func setWorkBuddyIconTitle(_ usage: WorkBuddyUsageSnapshot) {
+        let result = NSMutableAttributedString()
+        appendWorkBuddyTitle(usage, to: result)
+        lastGoodAttributedTitle = result
+        statusItem.button?.attributedTitle = result
+    }
+
+    private func appendWorkBuddyTitle(_ usage: WorkBuddyUsageSnapshot, to text: NSMutableAttributedString) {
+        appendIcon(from: workBuddyIconPath, to: text)
+        text.append(NSAttributedString(string: " 余", attributes: titleAttributes))
+        text.append(NSAttributedString(
+            string: creditBalanceText(usage.remainingCredits),
+            attributes: radarTitleAttributes(color: .systemGreen)))
+        text.append(NSAttributedString(string: "积分", attributes: titleAttributes))
     }
 
     private func appendRadarTitleSuffix(_ suffix: String, to text: NSMutableAttributedString) {
@@ -815,16 +881,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let quotas = quotaInfoByProvider(fromJSON: lastOutput)
         let codexUsage = CodexUsageParser.parse(lastOutput)
-        if !quotas.isEmpty || codexUsage != nil {
+        if !quotas.isEmpty || codexUsage != nil || lastWorkBuddyUsage != nil {
+            var hasSection = false
             if showClaudeSection, let claude = quotas["claude"] {
                 addQuotaSectionView(title: "Claude", iconPath: claudeIconPath, quota: claude, tasks: lastClaudeTasks)
+                hasSection = true
             }
             if let codexUsage {
-                if showClaudeSection, quotas["claude"] != nil {
+                if hasSection {
                     menu.addItem(.separator())
                 }
                 addCodexUsageSectionView(codexUsage)
                 addTaskRadarSectionView()
+                hasSection = true
+            }
+            if let workBuddyUsage = lastWorkBuddyUsage {
+                if hasSection {
+                    menu.addItem(.separator())
+                }
+                addWorkBuddyUsageSectionView(workBuddyUsage)
+                hasSection = true
             }
             if let lastRefreshDate {
                 menu.addItem(.separator())
@@ -854,6 +930,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openCodexBar.target = self
         menu.addItem(openCodexBar)
 
+        let openWorkBuddy = NSMenuItem(title: "打开 WorkBuddy", action: #selector(openWorkBuddyApp), keyEquivalent: "")
+        openWorkBuddy.target = self
+        menu.addItem(openWorkBuddy)
+
         let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -877,9 +957,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(item)
     }
 
+    private func addWorkBuddyUsageSectionView(_ usage: WorkBuddyUsageSnapshot) {
+        let item = NSMenuItem()
+        item.view = workBuddyUsageSectionView(usage)
+        item.isEnabled = true
+        menu.addItem(item)
+
+        for task in usage.tasks {
+            addWorkBuddyTaskMenuItem(task)
+        }
+    }
+
+    private func addWorkBuddyTaskMenuItem(_ task: WorkBuddyTaskUsage) {
+        let title = workBuddyTaskMenuTitle(task)
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(openWorkBuddyTaskFromMenu(_:)),
+            keyEquivalent: "")
+        item.target = self
+        item.representedObject = task
+        item.attributedTitle = workBuddyTaskMenuAttributedTitle(task)
+        item.isEnabled = true
+        menu.addItem(item)
+    }
+
+    private func workBuddyTaskMenuTitle(_ task: WorkBuddyTaskUsage) -> String {
+        "\(workBuddyStatusLabel(task.status))  \(task.title)  \(workBuddyTaskMeta(task))"
+    }
+
+    private func workBuddyTaskMenuAttributedTitle(_ task: WorkBuddyTaskUsage) -> NSAttributedString {
+        let text = workBuddyTaskMenuTitle(task)
+        let result = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 12),
+                .foregroundColor: NSColor.labelColor
+            ])
+        if let statusRange = text.range(of: workBuddyStatusLabel(task.status)) {
+            result.addAttributes(
+                [
+                    .font: NSFont.menuFont(ofSize: 12),
+                    .foregroundColor: workBuddyTaskIsRunning(task.status) ? NSColor.systemGreen : NSColor.systemBlue
+                ],
+                range: NSRange(statusRange, in: text))
+        }
+        return result
+    }
+
     private func addTaskRadarSectionView() {
         let snapshot = lastTaskRadarSnapshot
         guard !snapshot.items.isEmpty else { return }
+        let groups = compactTaskRadarGroups(snapshot, limit: lastWorkBuddyUsage == nil ? 8 : 5)
+        let visibleCount = groups.reduce(0) { $0 + $1.items.count }
 
         menu.addItem(.separator())
         let item = NSMenuItem()
@@ -887,16 +1016,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.isEnabled = false
         menu.addItem(item)
 
-        for group in snapshot.groups where !group.items.isEmpty {
+        for group in groups {
             addTaskGroupHeader(group)
             for task in group.items {
                 addTaskMenuItem(task)
             }
         }
 
-        if snapshot.hiddenCount > 0 {
-            addInfoItem("还有 \(snapshot.hiddenCount) 个未展开任务，报告页可看完整清单", secondary: true)
+        let hiddenCount = max(0, snapshot.totalCount - visibleCount)
+        if hiddenCount > 0 {
+            addInfoItem("还有 \(hiddenCount) 个未展开任务，报告页可看完整清单", secondary: true)
         }
+    }
+
+    private func compactTaskRadarGroups(
+        _ snapshot: TaskRadarSnapshot,
+        limit: Int
+    ) -> [TaskRadarGroup] {
+        var remaining = max(0, limit)
+        var result: [TaskRadarGroup] = []
+
+        for group in snapshot.groups where remaining > 0 {
+            let items = Array(group.items.prefix(remaining))
+            guard !items.isEmpty else { continue }
+            result.append(TaskRadarGroup(
+                title: group.title,
+                totalCount: group.totalCount,
+                items: items))
+            remaining -= items.count
+        }
+        return result
     }
 
     private func addInfoItem(_ title: String, secondary: Bool = false) {
@@ -964,6 +1113,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openCodexThread(id: task.id, cwd: task.cwd)
     }
 
+    @objc private func openWorkBuddyTaskFromMenu(_ sender: NSMenuItem) {
+        guard let task = sender.representedObject as? WorkBuddyTaskUsage else { return }
+        openWorkBuddyThread(id: task.id)
+    }
+
     private func openCodexThread(id: String, cwd: String?) {
         if let url = URL(string: "codex://threads/\(id)"),
            NSWorkspace.shared.open(url) {
@@ -981,6 +1135,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSWorkspace.shared.openApplication(
             at: URL(fileURLWithPath: codexIconPath),
+            configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    private func openWorkBuddyThread(id: String) {
+        if let url = URL(string: "workbuddy://chat/\(id)"),
+           NSWorkspace.shared.open(url) {
+            return
+        }
+
+        NSWorkspace.shared.openApplication(
+            at: URL(fileURLWithPath: workBuddyIconPath),
             configuration: NSWorkspace.OpenConfiguration())
     }
 
@@ -1083,6 +1248,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return view
+    }
+
+    private func workBuddyUsageSectionView(_ usage: WorkBuddyUsageSnapshot) -> NSView {
+        let viewHeight = CGFloat(104)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: viewHeight))
+
+        let icon = NSImageView(frame: NSRect(x: 18, y: viewHeight - 34, width: 22, height: 22))
+        icon.image = menuIcon(from: workBuddyIconPath, size: 22)
+        view.addSubview(icon)
+
+        let titleLabel = label("WorkBuddy", font: .systemFont(ofSize: 16, weight: .semibold), color: .labelColor)
+        titleLabel.frame = NSRect(x: 48, y: viewHeight - 34, width: 200, height: 22)
+        view.addSubview(titleLabel)
+
+        let sourceLabel = label("官方总积分", font: .systemFont(ofSize: 11), color: .secondaryLabelColor)
+        sourceLabel.alignment = .right
+        sourceLabel.frame = NSRect(x: 278, y: viewHeight - 31, width: 130, height: 16)
+        view.addSubview(sourceLabel)
+
+        let balanceLabel = label("剩余总积分", font: .systemFont(ofSize: 12, weight: .medium), color: .labelColor)
+        balanceLabel.frame = NSRect(x: 18, y: viewHeight - 65, width: 84, height: 18)
+        view.addSubview(balanceLabel)
+
+        let balanceValue = label(
+            creditBalanceText(usage.remainingCredits),
+            font: .monospacedDigitSystemFont(ofSize: 15, weight: .bold),
+            color: .systemGreen)
+        balanceValue.frame = NSRect(x: 102, y: viewHeight - 67, width: 120, height: 21)
+        view.addSubview(balanceValue)
+
+        let total = usage.availableCreditsTotal.map { "总额度 \(creditAmountText($0))" } ?? "总额度未知"
+        let totalLabel = label(total, font: .monospacedDigitSystemFont(ofSize: 11, weight: .medium), color: .secondaryLabelColor)
+        totalLabel.alignment = .right
+        totalLabel.frame = NSRect(x: 238, y: viewHeight - 64, width: 170, height: 17)
+        view.addSubview(totalLabel)
+
+        let heading = label("最近任务", font: .systemFont(ofSize: 12, weight: .semibold), color: .labelColor)
+        heading.frame = NSRect(x: 18, y: 8, width: 240, height: 18)
+        view.addSubview(heading)
+
+        return view
+    }
+
+    private func workBuddyTaskMeta(_ task: WorkBuddyTaskUsage) -> String {
+        "最近 \(creditAmountText(task.lastTurnCredits)) · 累计 \(creditAmountText(task.totalCredits))"
+    }
+
+    private func workBuddyTaskIsRunning(_ status: String) -> Bool {
+        ["running", "pending", "in_progress", "inprogress"].contains(status.lowercased())
+    }
+
+    private func workBuddyStatusLabel(_ status: String) -> String {
+        workBuddyTaskIsRunning(status) ? "跑" : "完"
     }
 
     private func addCodexProgressRow(
@@ -1276,6 +1494,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return String(format: value >= 10 ? "%.0fK tok" : "%.1fK tok", value)
         }
         return "\(tokens) tok"
+    }
+
+    private func compactCreditCount(_ credits: Double) -> String {
+        if credits >= 1_000 {
+            return String(format: credits >= 10_000 ? "%.0fK" : "%.1fK", credits / 1_000)
+        }
+        if credits >= 100 {
+            return String(format: "%.0f", credits)
+        }
+        if credits >= 10 {
+            return String(format: "%.1f", credits)
+        }
+        return String(format: credits == 0 ? "%.0f" : "%.2f", credits)
+    }
+
+    private func creditBalanceText(_ credits: Double?) -> String {
+        guard let credits else { return "--" }
+        return creditAmountText(credits)
+    }
+
+    private func creditAmountText(_ credits: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = credits.rounded() == credits ? 0 : 2
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: credits)) ?? String(format: "%.2f", credits)
     }
 
     private func taskDeltaColor(_ delta: Double?) -> NSColor {
@@ -1589,6 +1833,178 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard ratios.count >= 3 else { return nil }
         let sorted = ratios.sorted()
         return sorted[sorted.count / 2]
+    }
+
+    // MARK: - WorkBuddy Usage
+
+    private func fetchWorkBuddyUsage(limit: Int) -> WorkBuddyUsageSnapshot? {
+        let balance = fetchWorkBuddyBalance()
+        guard FileManager.default.fileExists(atPath: workBuddyDatabasePath) else {
+            guard let balance else { return nil }
+            return WorkBuddyUsageSnapshot(
+                remainingCredits: balance.remaining,
+                availableCreditsTotal: balance.total,
+                tasks: [])
+        }
+
+        let query = """
+        select
+          s.id,
+          coalesce(nullif(trim(s.custom_title), ''), nullif(trim(s.title), ''), '未命名任务') as title,
+          coalesce(s.status, '') as status,
+          coalesce(s.model, 'auto') as model,
+          coalesce(u.used, 0) as used,
+          coalesce(u.size, 0) as size,
+          coalesce(nullif(u.updated_at, 0), nullif(s.last_activity_at, 0), s.updated_at, 0) as activity_ms,
+          coalesce(
+            (select cast(value as real)
+             from json_each(u.credit_json)
+             order by id desc
+             limit 1), 0) as last_turn_credits,
+          coalesce(
+            (select sum(cast(value as real))
+             from json_each(u.credit_json)), 0) as total_credits
+        from sessions s
+        left join session_usage u on u.session_id = s.id
+        where s.deleted_at is null
+        order by activity_ms desc;
+        """
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(
+            workBuddyDatabasePath,
+            &db,
+            SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+            nil) == SQLITE_OK,
+            let db
+        else {
+            if db != nil { sqlite3_close(db) }
+            guard let balance else { return nil }
+            return WorkBuddyUsageSnapshot(
+                remainingCredits: balance.remaining,
+                availableCreditsTotal: balance.total,
+                tasks: [])
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 500)
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK,
+              let statement
+        else { return nil }
+        defer { sqlite3_finalize(statement) }
+
+        var allTasks: [WorkBuddyTaskUsage] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let idText = sqlite3_column_text(statement, 0),
+                  let titleText = sqlite3_column_text(statement, 1)
+            else { continue }
+
+            let status = sqlite3_column_text(statement, 2).map { String(cString: $0) } ?? ""
+            let model = sqlite3_column_text(statement, 3).map { String(cString: $0) } ?? "auto"
+            let used = Int(sqlite3_column_int64(statement, 4))
+            let size = Int(sqlite3_column_int64(statement, 5))
+            let activityMS = Double(sqlite3_column_int64(statement, 6))
+            let lastTurnCredits = sqlite3_column_double(statement, 7)
+            let totalCredits = sqlite3_column_double(statement, 8)
+            let updatedAt = activityMS > 0
+                ? Date(timeIntervalSince1970: activityMS / 1_000)
+                : Date.distantPast
+
+            allTasks.append(WorkBuddyTaskUsage(
+                id: String(cString: idText),
+                title: shortTaskTitle(String(cString: titleText)),
+                status: status,
+                model: model,
+                lastTurnCredits: lastTurnCredits,
+                totalCredits: totalCredits,
+                contextUsed: used,
+                contextSize: size,
+                updatedAt: updatedAt))
+        }
+
+        return WorkBuddyUsageSnapshot(
+            remainingCredits: balance?.remaining,
+            availableCreditsTotal: balance?.total,
+            tasks: Array(allTasks.prefix(limit)))
+    }
+
+    private func fetchWorkBuddyBalance() -> (remaining: Double, total: Double)? {
+        guard let authData = try? Data(contentsOf: URL(fileURLWithPath: workBuddyAuthPath)),
+              let root = try? JSONSerialization.jsonObject(with: authData) as? [String: Any],
+              let auth = root["auth"] as? [String: Any],
+              let account = root["account"] as? [String: Any],
+              let accessToken = auth["accessToken"] as? String,
+              !accessToken.isEmpty,
+              let userID = account["uid"] as? String,
+              !userID.isEmpty,
+              let url = URL(string: "https://copilot.tencent.com/v2/billing/meter/get-user-resource")
+        else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+
+        let body: [String: Any] = [
+            "PageNumber": 1,
+            "PageSize": 100,
+            "ProductCode": "p_tcaca",
+            "Status": [0, 3],
+            "PackageStartTimeRangeBegin": "2024-12-01 21:25:00",
+            "PackageStartTimeRangeEnd": formatter.string(from: Date())
+        ]
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(userID, forHTTPHeaderField: "X-User-Id")
+        if let domain = auth["domain"] as? String, !domain.isEmpty {
+            request.setValue(domain, forHTTPHeaderField: "X-Domain")
+        }
+        if let enterpriseID = account["enterpriseId"] as? String, !enterpriseID.isEmpty {
+            request.setValue(enterpriseID, forHTTPHeaderField: "X-Enterprise-Id")
+            request.setValue(enterpriseID, forHTTPHeaderField: "X-Tenant-Id")
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var responseData: Data?
+        var statusCode: Int?
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            responseData = data
+            statusCode = (response as? HTTPURLResponse)?.statusCode
+            semaphore.signal()
+        }.resume()
+
+        guard semaphore.wait(timeout: .now() + 18) == .success,
+              statusCode == 200,
+              let responseData,
+              let responseRoot = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+              let data = responseRoot["data"] as? [String: Any],
+              let response = data["Response"] as? [String: Any],
+              let responseBody = response["Data"] as? [String: Any],
+              let accounts = responseBody["Accounts"] as? [[String: Any]]
+        else { return nil }
+
+        let totals = accounts.reduce(into: (remaining: 0.0, total: 0.0)) { result, resource in
+            result.remaining += workBuddyNumber(resource["CycleCapacityRemainPrecise"])
+            result.total += workBuddyNumber(resource["CycleCapacitySizePrecise"])
+        }
+        return totals
+    }
+
+    private func workBuddyNumber(_ value: Any?) -> Double {
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let text = value as? String, let number = Double(text) {
+            return number
+        }
+        return 0
     }
 
     // MARK: - Codex Task Usages
@@ -2431,6 +2847,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let claudeSection = showClaudeSection ? buildClaudeReportSection(dateFormatter: dateFormatter) : ""
         let codexQuotaSection = CodexUsageParser.parse(lastOutput)
             .map { buildCurrentCodexUsageReportSection($0) } ?? ""
+        let workBuddySection = lastWorkBuddyUsage
+            .map { buildWorkBuddyReportSection($0, dateFormatter: dateFormatter) } ?? ""
         let codexSection = buildCodexReportSection(dateFormatter: dateFormatter)
         let radarSection = buildTaskRadarReportSection(dateFormatter: dateFormatter)
 
@@ -2502,9 +2920,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         \(radarSection)
         \(claudeSection)
         \(codexSection)
+        \(workBuddySection)
         <div class="notice">额度窗口以 Codex 当前实际返回为准：缺少的窗口不会用旧缓存补齐。Codex、ChatGPT Work 等 Agent 功能可能共享同一用量池；Spark 使用独立、可能随需求调整的额度。Token 处理量来自本地 JSONL，不等于账单。实际套餐请以 <a href="https://developers.openai.com/codex/pricing">OpenAI 官方页面</a>为准。</div>
         </body>
         </html>
+        """
+    }
+
+    private func buildWorkBuddyReportSection(
+        _ usage: WorkBuddyUsageSnapshot,
+        dateFormatter: DateFormatter
+    ) -> String {
+        var rows = ""
+        for task in usage.tasks {
+            let context = task.contextPercent.map { "\($0)%" } ?? "-"
+            let status = workBuddyTaskIsRunning(task.status) ? "进行中" : "已完成"
+            rows += """
+            <tr>
+                <td>\(escapeHTML(task.title))</td>
+                <td style="font-size:12px; color:#666">\(escapeHTML(task.model))</td>
+                <td style="color:\(workBuddyTaskIsRunning(task.status) ? "#27ae60" : "#666")">\(status)</td>
+                <td style="text-align:right; color:#2980b9; font-weight:700">\(creditAmountText(task.lastTurnCredits))</td>
+                <td style="text-align:right; color:#2980b9; font-weight:700">\(creditAmountText(task.totalCredits))</td>
+                <td style="text-align:right; color:#666">\(context)</td>
+                <td style="text-align:right; font-size:12px; color:#999">\(dateFormatter.string(from: task.updatedAt))</td>
+            </tr>
+            """
+        }
+        if rows.isEmpty {
+            rows = "<tr><td colspan='7' style='color:#999; text-align:center'>暂无 WorkBuddy 任务记录</td></tr>"
+        }
+
+        return """
+        <h2>WorkBuddy 用量</h2>
+        <div class="card">
+            <h3>官方积分余额</h3>
+            <div class="stat"><div class="stat-value">\(creditBalanceText(usage.remainingCredits))</div><div class="stat-label">目前剩余总积分</div></div>
+            <div class="stat"><div class="stat-value">\(creditBalanceText(usage.availableCreditsTotal))</div><div class="stat-label">当前可用总额度</div></div>
+            <p class="note" style="margin-top:16px">余额来自 WorkBuddy 官方接口。最近一次是任务里最后一轮对话消耗的积分；本任务累计是这个任务从开始到现在所有对话积分之和。上下文占用只是补充信息，不等于积分。</p>
+            <table>
+                <thead><tr><th>最近任务</th><th>Model</th><th>状态</th><th style="text-align:right">最近一次</th><th style="text-align:right">本任务累计</th><th style="text-align:right">上下文</th><th style="text-align:right">时间</th></tr></thead>
+                <tbody>\(rows)</tbody>
+            </table>
+        </div>
         """
     }
 
@@ -3018,6 +3476,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openCodexBarApp() {
         NSWorkspace.shared.openApplication(
             at: URL(fileURLWithPath: "/Applications/CodexBar.app"),
+            configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    @objc private func openWorkBuddyApp() {
+        NSWorkspace.shared.openApplication(
+            at: URL(fileURLWithPath: workBuddyIconPath),
             configuration: NSWorkspace.OpenConfiguration())
     }
 

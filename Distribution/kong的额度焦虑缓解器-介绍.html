@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="kong的额度焦虑缓解器：在 Mac 菜单栏查看 Codex 额度、WorkBuddy 积分和近期任务。">
+  <title>kong的额度焦虑缓解器</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18201d;
+      --muted: #64706b;
+      --line: #dce3df;
+      --paper: #ffffff;
+      --soft: #f4f7f5;
+      --green: #087a4b;
+      --green-soft: #e6f4ed;
+      --blue: #1769aa;
+      --blue-soft: #eaf3fb;
+      --orange: #a64d0a;
+      --orange-soft: #fff0e3;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { background: var(--paper); }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 17px;
+      line-height: 1.65;
+      letter-spacing: 0;
+    }
+
+    a { color: inherit; }
+
+    .wrap {
+      width: min(1040px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 56px 0 42px;
+      border-bottom: 1px solid var(--line);
+      background: var(--soft);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 34px;
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      background: var(--green);
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--green);
+      font-size: 15px;
+      font-weight: 750;
+    }
+
+    h1 {
+      max-width: 850px;
+      margin: 0;
+      font-size: clamp(38px, 7vw, 70px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 720px;
+      margin: 22px 0 0;
+      color: #3e4945;
+      font-size: 21px;
+      line-height: 1.7;
+    }
+
+    .compatibility {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .tag {
+      display: inline-flex;
+      min-height: 34px;
+      align-items: center;
+      padding: 6px 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      color: #47524e;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    main section {
+      padding: 54px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-title {
+      margin: 0 0 10px;
+      font-size: 29px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .section-intro {
+      max-width: 700px;
+      margin: 0 0 30px;
+      color: var(--muted);
+    }
+
+    .preview-shell {
+      overflow: hidden;
+      border: 1px solid #cdd7d2;
+      border-radius: 8px;
+      background: #f8faf9;
+      box-shadow: 0 18px 45px rgba(26, 46, 38, 0.11);
+    }
+
+    .menu-bar {
+      display: flex;
+      min-height: 58px;
+      align-items: center;
+      justify-content: center;
+      gap: 25px;
+      padding: 11px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #eef3f0;
+      font-variant-numeric: tabular-nums;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .menu-bar span { white-space: nowrap; }
+    .wb { color: var(--green); }
+    .codex { color: var(--blue); }
+    .running { color: var(--orange); }
+
+    .dropdown {
+      width: min(560px, calc(100% - 30px));
+      margin: 28px auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      box-shadow: 0 12px 32px rgba(26, 46, 38, 0.09);
+    }
+
+    .provider {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 18px 20px 12px;
+    }
+
+    .provider + .provider { border-top: 1px solid var(--line); }
+
+    .provider-name {
+      font-size: 20px;
+      font-weight: 760;
+    }
+
+    .balance {
+      color: var(--green);
+      font-variant-numeric: tabular-nums;
+      font-weight: 760;
+    }
+
+    .usage-row,
+    .task-row {
+      display: grid;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 20px;
+      border-top: 1px solid #edf1ef;
+      font-size: 14px;
+    }
+
+    .usage-row { grid-template-columns: 70px 1fr 90px; }
+    .task-row { grid-template-columns: minmax(0, 1fr) auto; }
+
+    .bar {
+      height: 7px;
+      overflow: hidden;
+      border-radius: 4px;
+      background: #dfe6e2;
+    }
+
+    .bar > i {
+      display: block;
+      width: 72%;
+      height: 100%;
+      background: var(--green);
+    }
+
+    .task-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 650;
+    }
+
+    .task-meta {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .caption {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+    }
+
+    .feature {
+      min-height: 180px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .feature-number {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      margin-bottom: 20px;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 15px;
+      font-weight: 800;
+    }
+
+    .feature:nth-child(2) .feature-number {
+      color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .feature:nth-child(3) .feature-number {
+      color: var(--orange);
+      background: var(--orange-soft);
+    }
+
+    .feature h3 {
+      margin: 0 0 9px;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+
+    .feature p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .two-column {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+    }
+
+    .plain-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .plain-list li {
+      position: relative;
+      padding: 13px 0 13px 30px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .plain-list li::before {
+      position: absolute;
+      left: 0;
+      top: 15px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      color: white;
+      background: var(--green);
+      content: "✓";
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 20px;
+      text-align: center;
+    }
+
+    .plain-list.no li::before {
+      background: #8b9691;
+      content: "×";
+    }
+
+    .steps {
+      display: grid;
+      gap: 0;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: step;
+    }
+
+    .steps li {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 14px;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+      counter-increment: step;
+    }
+
+    .steps li::before {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      background: var(--ink);
+      content: counter(step);
+      font-weight: 800;
+    }
+
+    .steps strong { display: block; margin-bottom: 3px; }
+    .steps p { margin: 0; color: var(--muted); }
+
+    .notice {
+      padding: 22px 24px;
+      border-left: 5px solid var(--orange);
+      background: var(--orange-soft);
+    }
+
+    .notice strong { display: block; margin-bottom: 5px; }
+    .notice p { margin: 0; }
+
+    .privacy {
+      background: var(--soft);
+    }
+
+    .privacy-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px 34px;
+    }
+
+    .privacy-item {
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .privacy-item strong { display: block; margin-bottom: 4px; }
+    .privacy-item span { color: var(--muted); }
+
+    footer {
+      padding: 30px 0 44px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 760px) {
+      body { font-size: 16px; }
+      .wrap { width: min(100% - 28px, 1040px); }
+      .hero { padding: 34px 0 30px; }
+      .brand { margin-bottom: 26px; }
+      h1 { font-size: 42px; }
+      .lead { font-size: 18px; }
+      main section { padding: 40px 0; }
+      .feature-grid, .two-column, .privacy-grid { grid-template-columns: 1fr; }
+      .feature { min-height: 0; }
+      .menu-bar { justify-content: flex-start; gap: 18px; overflow-x: auto; }
+      .usage-row { grid-template-columns: 58px 1fr 72px; }
+      .task-row { grid-template-columns: 1fr; gap: 2px; }
+      .task-meta { white-space: normal; }
+      .provider { align-items: flex-start; flex-direction: column; gap: 4px; }
+    }
+
+    @media print {
+      .hero, .privacy { background: white; }
+      .preview-shell, .dropdown { box-shadow: none; }
+      main section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="brand"><span class="brand-mark">K</span><span>一个放在 Mac 菜单栏里的小工具</span></div>
+      <p class="eyebrow">Mac 测试版</p>
+      <h1>kong的额度焦虑缓解器</h1>
+      <p class="lead">不用反复打开几个软件猜额度。点一下菜单栏，就能看到 Codex 还剩多少、WorkBuddy 还剩多少积分，以及最近哪些任务用得多。</p>
+      <div class="compatibility">
+        <span class="tag">苹果芯片 Mac</span>
+        <span class="tag">macOS 14 以上</span>
+        <span class="tag">本机运行</span>
+        <span class="tag">Windows 暂不支持</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">打开以后，大概是这样</h2>
+        <p class="section-intro">上面看总量，点开看任务。下面只是示意数字，每个人看到的都是自己账号的真实数据。</p>
+        <div class="preview-shell">
+          <div class="menu-bar">
+            <span class="wb">WorkBuddy 余 4,515 积分</span>
+            <span class="codex">Codex 92% · Spark 100%</span>
+            <span class="running">跑 3 · 2h 7 · 24h 32</span>
+          </div>
+          <div class="dropdown">
+            <div class="provider">
+              <span class="provider-name">Codex</span>
+              <span>5 小时与一周额度</span>
+            </div>
+            <div class="usage-row"><span>5 小时</span><span class="bar"><i></i></span><strong>92%</strong></div>
+            <div class="task-row"><span class="task-name">跑　正在整理项目资料</span><span class="task-meta">106M tok · 执行中</span></div>
+            <div class="task-row"><span class="task-name">完　检查报告数据</span><span class="task-meta">13M tok</span></div>
+            <div class="provider">
+              <span class="provider-name">WorkBuddy</span>
+              <span class="balance">剩余 4,515 / 8,915</span>
+            </div>
+            <div class="task-row"><span class="task-name">创建简单逻辑画布</span><span class="task-meta">最近 85.45 · 累计 85.45</span></div>
+            <div class="task-row"><span class="task-name">阶段性项目更新规划</span><span class="task-meta">最近 7.27 · 累计 1,561.95</span></div>
+          </div>
+        </div>
+        <p class="caption">点击列表里的 Codex 或 WorkBuddy 任务，可以直接回到对应任务。</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">它主要解决三件事</h2>
+        <p class="section-intro">不讲复杂术语，只把每天真正会看的东西放在一起。</p>
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="feature-number">01</span>
+            <h3>还剩多少</h3>
+            <p>Codex 看额度百分比和重置时间。WorkBuddy 看剩余总积分，不再把两种规则混在一起。</p>
+          </article>
+          <article class="feature">
+            <span class="feature-number">02</span>
+            <h3>谁用得多</h3>
+            <p>看到近期任务、Token 处理量，以及 WorkBuddy 最近一轮和整个任务分别用了多少积分。</p>
+          </article>
+          <article class="feature">
+            <span class="feature-number">03</span>
+            <h3>直接回任务</h3>
+            <p>任务不是一行死文字。点一下，就能回到 Codex 或 WorkBuddy 里的对应任务继续处理。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">先看你的电脑能不能用</h2>
+        <div class="two-column">
+          <div>
+            <h3>现在可以用</h3>
+            <ul class="plain-list">
+              <li>M1、M2、M3、M4 等苹果芯片 Mac</li>
+              <li>macOS 14 或更新版本</li>
+              <li>已经安装并登录 Codex</li>
+              <li>已经安装 CodexBar</li>
+              <li>需要 WorkBuddy 数据时，安装并登录 WorkBuddy</li>
+            </ul>
+          </div>
+          <div>
+            <h3>现在还不能用</h3>
+            <ul class="plain-list no">
+              <li>Windows 电脑</li>
+              <li>Intel 芯片的旧款 Mac</li>
+              <li>低于 macOS 14 的系统</li>
+              <li>没有 CodexBar 时，无法读取 Codex 官方额度</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2 class="section-title">安装方法</h2>
+        <ol class="steps">
+          <li><div><strong>解压收到的 ZIP 文件</strong><p>里面会看到“kong的额度焦虑缓解器.app”。</p></div></li>
+          <li><div><strong>把应用拖进“应用程序”文件夹</strong><p>以后它会作为菜单栏小工具运行。</p></div></li>
+          <li><div><strong>第一次打开时，右键选择“打开”</strong><p>这是测试版，Mac 可能会先弹出安全提醒。</p></div></li>
+          <li><div><strong>登录自己的 Codex 和 WorkBuddy</strong><p>工具读取的是这台电脑上的账号数据，不是制作者的数据。</p></div></li>
+        </ol>
+        <div class="notice">
+          <strong>看到空白或没有额度怎么办？</strong>
+          <p>先确认 CodexBar 已安装并能正常显示额度。WorkBuddy 部分只有在安装并登录 WorkBuddy 后才会出现。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="privacy">
+      <div class="wrap">
+        <h2 class="section-title">关于隐私，简单说清楚</h2>
+        <p class="section-intro">压缩包里没有制作者的账号、任务、积分或登录信息。</p>
+        <div class="privacy-grid">
+          <div class="privacy-item"><strong>每个人看自己的数据</strong><span>安装后读取的是使用者自己电脑上的 Codex 和 WorkBuddy 记录。</span></div>
+          <div class="privacy-item"><strong>任务分析在本机完成</strong><span>任务标题、状态和本地日志不会因为安装这个工具自动发给制作者。</span></div>
+          <div class="privacy-item"><strong>WorkBuddy 余额来自官方接口</strong><span>工具使用本机已经登录的 WorkBuddy 身份读取当前余额。</span></div>
+          <div class="privacy-item"><strong>这是测试版</strong><span>Codex 或 WorkBuddy 更新内部规则后，个别显示可能需要同步调整。</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">kong的额度焦虑缓解器 · Mac 苹果芯片测试版 · 2026</div>
+  </footer>
+</body>
+</html>

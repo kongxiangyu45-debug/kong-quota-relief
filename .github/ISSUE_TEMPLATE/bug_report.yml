@@ -17,12 +17,21 @@ body:
       label: What did you expect?
     validations:
       required: true
-  - type: input
-    id: macos
+  - type: dropdown
+    id: system
     attributes:
-      label: macOS version
+      label: System
+      options:
+        - macOS
+        - Windows 10
+        - Windows 11
+        - Other
     validations:
       required: true
+  - type: input
+    id: system_version
+    attributes:
+      label: System version
   - type: input
     id: codex
     attributes:

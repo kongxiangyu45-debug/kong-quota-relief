@@ -1,5 +1,6 @@
 /.build/
 /dist/
 /releases/
+/windows/QuotaRelief/dist/
 .DS_Store
 *.xcuserstate

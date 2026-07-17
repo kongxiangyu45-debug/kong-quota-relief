@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 - 2026-07-17
+
+- Rename the public app to “kong 的额度焦虑缓解器”.
+- Add WorkBuddy balance, recent-task credits and direct task links.
+- Add a native Windows 10/11 x64 tray version.
+- Follow Windows system proxy and PAC settings when querying Codex usage.
+- Add a privacy-preserving WorkBuddy diagnostic worksheet for Windows connection issues.
+- Publish matching Mac and Windows downloads from one repository.
+
 ## 0.2.0 - 2026-07-13
 
 - Follow Codex's server-provided quota windows instead of assuming that both five-hour and weekly windows always exist.

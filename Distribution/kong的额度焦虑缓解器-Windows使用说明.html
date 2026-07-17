@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>kong的额度焦虑缓解器 - Windows 使用说明</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #18201d;
+      background: #f4f7f5;
+      font: 17px/1.65 "Segoe UI", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+    main { width: min(820px, calc(100% - 32px)); margin: 0 auto; padding: 46px 0 60px; }
+    .mark {
+      display: grid;
+      width: 44px;
+      height: 44px;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      background: #087a4b;
+      font-size: 22px;
+      font-weight: 800;
+    }
+    h1 { margin: 18px 0 10px; font-size: 42px; line-height: 1.16; letter-spacing: 0; }
+    .lead { margin: 0; color: #5e6964; font-size: 20px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 40px; }
+    .tag { padding: 5px 10px; border: 1px solid #d7dfdb; border-radius: 6px; background: white; font-size: 14px; font-weight: 650; }
+    section { padding: 30px 0; border-top: 1px solid #d7dfdb; }
+    h2 { margin: 0 0 14px; font-size: 25px; letter-spacing: 0; }
+    ol { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+    li { position: relative; min-height: 48px; padding: 11px 0 11px 52px; counter-increment: step; }
+    ol li::before {
+      position: absolute;
+      left: 0;
+      top: 9px;
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      background: #18201d;
+      content: counter(step);
+      font-weight: 800;
+    }
+    ul { margin: 0; padding-left: 24px; }
+    li + li { border-top: 1px solid #e2e8e5; }
+    .notice { padding: 18px 20px; border-left: 5px solid #a64d0a; background: #fff0e3; }
+    .notice p { margin: 4px 0 0; }
+    .plain { color: #5e6964; }
+    code { padding: 2px 5px; border-radius: 4px; background: #e8eeeb; font-family: Consolas, monospace; }
+    footer { padding-top: 24px; color: #6b7671; font-size: 14px; }
+    @media (max-width: 620px) {
+      body { font-size: 16px; }
+      main { padding-top: 28px; }
+      h1 { font-size: 35px; }
+      .lead { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">K</div>
+    <h1>kong的额度焦虑缓解器</h1>
+    <p class="lead">Windows 右下角托盘测试版</p>
+    <div class="tags">
+      <span class="tag">Windows 10/11</span>
+      <span class="tag">64 位 x64</span>
+      <span class="tag">无需安装 .NET</span>
+      <span class="tag">自动跟随系统代理</span>
+      <span class="tag">本机读取</span>
+    </div>
+
+    <section>
+      <h2>怎么开始</h2>
+      <ol>
+        <li>解压 ZIP，双击 <code>kong的额度焦虑缓解器.exe</code>。</li>
+        <li>程序不会弹出大窗口，它会出现在 Windows 右下角托盘里。没看到时，点一下右下角的“^”。</li>
+        <li>单击托盘图标，查看 Codex 额度、WorkBuddy 积分和近期任务。</li>
+        <li>点击任务名称，可以直接回到 Codex 或 WorkBuddy 的对应任务。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>使用前需要什么</h2>
+      <ul>
+        <li>Codex 已安装并登录。没有登录时，Codex 额度不会出现。</li>
+        <li>需要 WorkBuddy 数据时，请先安装并登录 WorkBuddy。</li>
+        <li>联网时读取两个平台的官方余额；任务标题和用量明细来自这台电脑的本地记录。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>第一次运行的安全提示</h2>
+      <div class="notice">
+        <strong>这是未购买商业签名证书的测试版。</strong>
+        <p>如果 Windows SmartScreen 拦截，确认文件来源可信后，选择“更多信息”再选择“仍要运行”。</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>任务有了，Codex 额度却没显示</h2>
+      <ol>
+        <li>先确认 Codex 本身可以正常联网，并且已经登录当前账号。</li>
+        <li>新版会自动沿用 Windows 的系统代理和 PAC。刚切换代理时，先退出本程序，再重新双击打开。</li>
+        <li>打开托盘菜单，点击“刷新”。如果仍然失败，重启代理软件后再试一次。</li>
+      </ol>
+      <p class="plain">能看到近期任务，说明本地记录读取正常；只有额度不显示，通常是在线额度接口没有走到代理，并不是套餐不支持。</p>
+    </section>
+
+    <section>
+      <h2>它会读取什么</h2>
+      <p class="plain">程序只读取当前 Windows 用户自己的 Codex、WorkBuddy 登录状态和本地任务数据库。压缩包里没有制作者的账号、Token、积分或任务记录。生成的用量报告也只保存在本机临时目录。</p>
+    </section>
+
+    <section>
+      <h2>怎么退出</h2>
+      <p class="plain">单击托盘图标，在菜单最下面选择“退出”。直接关闭说明页不会退出托盘程序。</p>
+    </section>
+
+    <footer>kong的额度焦虑缓解器 · Windows x64 · v0.3.0 · 2026-07-17</footer>
+  </main>
+</body>
+</html>
